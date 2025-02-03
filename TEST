@@ -1,0 +1,19 @@
+在终端中直接运行驱动文件，确认是否可执行
+/Users/clairexu/Desktop/GitHub/cartoScrape/Drivers/chromedriver
+
+赋予驱动文件执行权限
+chmod +x /Users/clairexu/Desktop/GitHub/cartoScrape/Drivers/chromedriver
+
+打开终端，执行以下命令移除文件的隔离属性
+xattr -d com.apple.quarantine /Users/clairexu/Desktop/GitHub/cartoScrape/Drivers/chromedriver
+
+在开发者工具的 Console 中测试选择器是否有效: 顶部Data按钮
+// 检查是否能选中目标元素
+document.querySelector('.navbar-elementItem[href="/dashboard/datasets/"]');
+// 如果返回元素对象，说明选择器正确；否则返回 null
+
+# 点击进入数据集页面
+data_link = WebDriverWait(driver, 10).until(
+    EC.presence_of_element_located((By.CSS_SELECTOR, 'a.navbar-elementItem[href="/dashboard/datasets/"]'))
+)
+data_link.click()
