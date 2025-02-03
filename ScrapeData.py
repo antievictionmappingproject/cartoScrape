@@ -45,7 +45,7 @@ email = driver.find_element(By.ID, 'session_email')
 email.send_keys('antievictionmap@riseup.net')
 
 password = driver.find_element(By.ID, 'session_password')
-password.send_keys('Ampitup2013!')
+password.send_keys('*********')
 
 # login
 login_button = driver.find_element(By.CLASS_NAME, 'button.button--arrow.is-cartoRed.u-width--100')
