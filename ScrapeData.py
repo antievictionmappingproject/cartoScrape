@@ -1,115 +1,227 @@
-import json
+import os
+import time
+import shutil
+import traceback
+
 from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-import time
-import os
 
-# # find all maps title is-small viewall-link
-# all_maps = driver.find_element(By.CLASS_NAME, 'title.is-small.viewall-link')
-# all_maps.click()
-#
-# # switch to list view
-# driver.find_element(By.CLASS_NAME, 'mapcard-view-mode').click()
-#
-# # find all links with this class text is-caption is-txtGrey u-ellipsis cell--map-name__text
-# links = driver.find_elements(By.CLASS_NAME, 'row.row--can-hover')
+BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Datasets"
+TEMP_DOWNLOAD_DIR = os.path.expanduser("/Users/clairexu/Desktop/GitHub/cartoScrape/Data")
+CARTO_URL = "https://ampitup.carto.com"
+EMAIL = "antievictionmap@riseup.net"
+PASSWORD = "*********"  # Replace with actual password
+CHROME_DRIVER_PATH = "./Drivers/chromedriver"
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Get the Data
+# Ensure download directory exists
+os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
-# download path
-download_dir = "/Users/clairexu/Desktop/GitHub/cartoScrape"
-os.makedirs(download_dir, exist_ok=True)
+def setup_driver():
+    chrome_options = Options()
+    prefs = {"download.default_directory": TEMP_DOWNLOAD_DIR}
+    chrome_options.add_experimental_option("prefs", prefs)
 
-chrome_options = Options()
-prefs = {"download.default_directory": download_dir}
-chrome_options.add_experimental_option("prefs", prefs)
+    service = Service(executable_path=CHROME_DRIVER_PATH)
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
 
-# 登录和导航到数据集页面（复用之前的登录代码）
-# set up a webdriver for your browser
-service = Service(executable_path="./Drivers/chromedriver")
-driver = webdriver.Chrome(service=service, options=chrome_options)
-driver.get('https://ampitup.carto.com')
+def move_downloaded_files(dataset_folder):
+    """Move the most recently downloaded file to the dataset's folder."""
+    time.sleep(5)
+    files = [f for f in os.listdir(TEMP_DOWNLOAD_DIR) if not f.startswith('.')]
 
-# find a class called Header-settingsItem js-login
-login = driver.find_element(By.CLASS_NAME, 'Header-settingsItem.js-login')
-login.click()
+    if not files:
+        print("No downloaded files found.")
+        return
 
-# find the session-email input
-email = driver.find_element(By.ID, 'session_email')
-email.send_keys('antievictionmap@riseup.net')
+    latest_file = max(files, key=lambda f: os.path.getctime(os.path.join(TEMP_DOWNLOAD_DIR, f)))
+    source_path = os.path.join(TEMP_DOWNLOAD_DIR, latest_file)
+    destination_path = os.path.join(dataset_folder, latest_file)
 
-password = driver.find_element(By.ID, 'session_password')
-password.send_keys('*********')
+    try:
+        shutil.move(source_path, destination_path)
+        print(f"Moved {latest_file} to {dataset_folder}")
+    except Exception as e:
+        print(f"Error moving file: {e}")
 
-# login
-login_button = driver.find_element(By.CLASS_NAME, 'button.button--arrow.is-cartoRed.u-width--100')
-login_button.click()
+def login(driver):
+    """Log into Carto"""
+    driver.get(CARTO_URL)
 
-# 点击进入数据集页面
-# Navigate to "Data"
-data_link = WebDriverWait(driver, 10).until(
-    EC.presence_of_element_located((By.CSS_SELECTOR, 'a.navbar-elementItem[href="/dashboard/datasets/"]'))
-)
-data_link.click()
+    login_button = driver.find_element(By.CLASS_NAME, 'Header-settingsItem.js-login')
+    login_button.click()
 
-# 抓取所有数据集
-all_datasets = []
+    driver.find_element(By.ID, 'session_email').send_keys(EMAIL)
+    driver.find_element(By.ID, 'session_password').send_keys(PASSWORD)
 
-try:
-    while True:
-        # 等待数据集列表加载
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CLASS_NAME, 'DatasetListItem'))
+    driver.find_element(By.CLASS_NAME, 'button.button--arrow.is-cartoRed.u-width--100').click()
+
+
+def navigate_to_datasets(driver):
+    """Navigate to Data Dashboard"""
+    data_link = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, 'a.navbar-elementItem[href="/dashboard/datasets/"]'))
+    )
+    data_link.click()
+
+
+def get_dataset_links(driver):
+    """Retrieve all dataset links in a page"""
+    dataset_elements = WebDriverWait(driver, 30).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a.dataset-row.dataset-row--can-hover'))
+    )
+    return [elem.get_attribute('href') for elem in dataset_elements]
+
+def download_dataset(driver, dataset_link):
+    """Download a dataset in available formats (GeoJSON, SHP, CSV)."""
+    driver.get(dataset_link)
+
+    # Extract dataset name
+    dataset_name = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, 'h2.CDB-Text.CDB-Size-huge.js-title'))
+    ).text
+
+    dataset_folder = os.path.join(BASE_DOWNLOAD_DIR, dataset_name)
+    os.makedirs(dataset_folder, exist_ok=True)
+
+    # Click export button
+    locate_export_button(driver).click()
+
+    downloaded_geojson = False
+    downloaded_shp = False
+
+    if try_download_format(driver, 'geojson'):
+        move_downloaded_files(dataset_folder)
+        print(f"Downloaded GeoJSON for {dataset_name}")
+        time.sleep(3)  # Allow DOM to stabilize
+        locate_export_button(driver).click()  # Click export again for downloading SHP
+        downloaded_geojson = True
+
+    if try_download_format(driver, 'shp'):
+        move_downloaded_files(dataset_folder)
+        print(f"Downloaded SHP for {dataset_name}")
+        downloaded_shp = True
+
+    if not downloaded_geojson and not downloaded_shp:
+        move_downloaded_files(dataset_folder)
+        try_download_format(driver, 'csv')
+        print(f"Downloaded CSV for {dataset_name}")
+
+    print(f"Download complete for {dataset_name}")
+
+    # Return to dashboard
+    back_to_dashboard(driver)
+
+def locate_export_button(driver):
+    """Ensure we always get a fresh export button."""
+    return WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.CLASS_NAME, 'js-export'))
+    )
+
+def get_export_formats(driver):
+    """Get the available export formats for a dataset"""
+    export_options = WebDriverWait(driver, 10).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'ul.js-formats input.js-format'))
+    )
+    return {opt.get_attribute("data-format").lower(): opt for opt in export_options if opt.get_attribute("data-format")}
+
+def try_download_format(driver, format_type):
+    """Attempt to download a dataset in a specific format, re-locating elements each time."""
+    try:
+        export_formats = get_export_formats(driver)  # Re-locate options
+        if format_type in export_formats and 'disabled' not in export_formats[format_type].get_attribute('class'):
+            export_formats[format_type].click()
+            download_button = WebDriverWait(driver, 120).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.CDB-Button.js-confirm'))
+            )
+            download_button.click()
+            time.sleep(5)  # Allow time for download
+            return True
+    except Exception as e:
+        print(f"Error downloading {format_type}: {e}")
+        traceback.print_exc()
+    return False
+
+
+def back_to_dashboard(driver):
+    """Use browser's back button to return to dataset list"""
+    try:
+        driver.back()
+        time.sleep(5)
+        print("Returned to the Data Dashboard")
+    except Exception as e:
+        print(f"Error returning to the Data Dashboard: {e}")
+
+def navigate_to_next_page(driver):
+    """Navigate to the next page by selecting the page following the current one"""
+    try:
+        # Locate the current page
+        current_page = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "li.Pagination-listItem.is-current"))
         )
-        datasets = driver.find_elements(By.CLASS_NAME, 'DatasetListItem')
 
-        # 提取当前页数据集
-        current_page_datasets = []
-        for dataset in datasets:
-            name = dataset.find_element(By.CLASS_NAME, 'DatasetListItem-title').text
-            url = dataset.find_element(By.TAG_NAME, 'a').get_attribute('href')
-            current_page_datasets.append((name, url))
+        # Find the next page element
+        next_page = current_page.find_element(By.XPATH, "following-sibling::li")
 
-        all_datasets.extend(current_page_datasets)
+        if next_page:
+            next_page.click()
+            time.sleep(5)
+            print("Navigated to the next page")
+            return True
+        else:
+            print("No next page available")
+            return False
 
-        # 翻页
-        try:
-            next_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, '.Pagination-next:not(.disabled)'))
-            )
-            next_button.click()
-            WebDriverWait(driver, 10).until(EC.staleness_of(datasets[0]))
-        except:
-            break
+    except Exception as e:
+        print(f"Error navigating to next page: {e}")
+        return False
 
-finally:
-    # 导出每个数据集
-    for name, url in all_datasets:
-        try:
-            driver.get(url)
-            export_button = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CLASS_NAME, 'ExportButton'))
-            )
-            export_button.click()
+def main():
+    driver = setup_driver()
+    total_start_time = time.time()
 
-            Select(driver.find_element(By.NAME, 'export_format')).select_by_visible_text('CSV')
-            driver.find_element(By.XPATH, '//button[text()="Export"]').click()
-            time.sleep(5)  # 根据实际网络速度调整
+    try:
+        login(driver)
+        navigate_to_datasets(driver)
 
-            # 重命名文件
-            latest_file = max(
-                [os.path.join(download_dir, f) for f in os.listdir(download_dir)],
-                key=os.path.getctime
-            )
-            os.rename(latest_file, os.path.join(download_dir, f"{name}.csv"))
+        page_number = 1
 
-        except Exception as e:
-            print(f"导出数据集 {name} 失败: {e}")
+        while True:
+            page_start_time = time.time()
+            print(f"Processing page {page_number}...")
 
-    driver.quit()
+            dataset_links = get_dataset_links(driver)
+
+            if not dataset_links:
+                print("No datasets found on this page.")
+                break
+
+            for idx, dataset_link in enumerate(dataset_links, start=1):
+                print(f"Processing dataset {idx} on page {page_number}...")
+                download_dataset(driver, dataset_link)
+
+            page_end_time = time.time()
+            print(f"Time taken for page {page_number}: {page_end_time - page_start_time:.2f} seconds")
+
+            if not navigate_to_next_page(driver):
+                break  # Exit loop if no next page exists
+
+            page_number += 1
+
+        print("All datasets downloaded successfully.")
+        total_end_time = time.time()
+        print(f"Total time taken to download all datasets: {total_end_time - total_start_time:.2f} seconds")
+
+    except Exception as e:
+        print(f"Error encountered: {e}")
+
+    finally:
+        driver.quit()
+        print("Browser closed.")
+
+if __name__ == "__main__":
+    main()
