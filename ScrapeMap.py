@@ -10,7 +10,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 
-BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Datasets"
+BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Maps"
 TEMP_DOWNLOAD_DIR = os.path.expanduser("/Users/clairexu/Desktop/GitHub/cartoScrape/Data")
 CARTO_URL = "https://ampitup.carto.com"
 EMAIL = "antievictionmap@riseup.net"
@@ -29,24 +29,23 @@ def setup_driver():
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
-def move_downloaded_files(dataset_folder):
-    """Move the most recently downloaded file to the dataset's folder."""
-    time.sleep(10)
-    files = [f for f in os.listdir(TEMP_DOWNLOAD_DIR) if not f.startswith('.')]
-
-    if not files:
-        print("No downloaded files found.")
-        return
-
-    latest_file = max(files, key=lambda f: os.path.getctime(os.path.join(TEMP_DOWNLOAD_DIR, f)))
-    source_path = os.path.join(TEMP_DOWNLOAD_DIR, latest_file)
-    destination_path = os.path.join(dataset_folder, latest_file)
-
+def move_downloaded_files():
+    """Move the most recently downloaded file to the Carto-Maps folder."""
+    time.sleep(5)
     try:
+        files = [f for f in os.listdir(TEMP_DOWNLOAD_DIR) if not f.startswith('.')]
+        if not files:
+            print("WARNING: No downloaded files found.")
+            return
+
+        latest_file = max(files, key=lambda f: os.path.getctime(os.path.join(TEMP_DOWNLOAD_DIR, f)))
+        source_path = os.path.join(TEMP_DOWNLOAD_DIR, latest_file)
+        destination_path = os.path.join(BASE_DOWNLOAD_DIR, latest_file)
+
         shutil.move(source_path, destination_path)
-        print(f"Moved {latest_file} to {dataset_folder}")
+        print(f"Moved {latest_file} to {BASE_DOWNLOAD_DIR}")
     except Exception as e:
-        print(f"Error moving file: {e}")
+        print(f"ERROR: Failed to move downloaded file - {e}")
 
 def login(driver):
     """Log into Carto"""
@@ -61,91 +60,65 @@ def login(driver):
     driver.find_element(By.CLASS_NAME, 'button.button--arrow.is-cartoRed.u-width--100').click()
 
 
-def navigate_to_datasets(driver):
+def navigate_to_maps(driver):
     """Navigate to Data Dashboard"""
     data_link = WebDriverWait(driver, 30).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, 'a.navbar-elementItem[href="/dashboard/datasets/"]'))
+        EC.presence_of_element_located((By.CSS_SELECTOR, 'a.navbar-elementItem[href="/dashboard/maps/"]'))
     )
     data_link.click()
 
 
-def get_dataset_links(driver):
+def get_map_links(driver):
     """Retrieve all dataset links in a page"""
-    dataset_elements = WebDriverWait(driver, 30).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a.dataset-row.dataset-row--can-hover'))
+    maps_elements = WebDriverWait(driver, 30).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a.card.map-card.card--can-hover'))
     )
-    return [elem.get_attribute('href') for elem in dataset_elements]
+    return [elem.get_attribute('href') for elem in maps_elements]
 
-def download_dataset(driver, dataset_link):
+def download_map(driver, map_link):
     """Download a dataset in available formats (GeoJSON, SHP, CSV)."""
-    driver.get(dataset_link)
+    driver.get(map_link)
 
-    # Extract dataset name
-    dataset_name = WebDriverWait(driver, 30).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, 'h2.CDB-Text.CDB-Size-huge.js-title'))
-    ).text
+    # open toggle menu
+    locate_toggle_menu(driver).click()
 
-    dataset_folder = os.path.join(BASE_DOWNLOAD_DIR, dataset_name)
-    os.makedirs(dataset_folder, exist_ok=True)
+    # click download map
+    locate_download_map(driver).click()
 
-    # Click export button
-    locate_export_button(driver).click()
+    # confirm download
+    confirm_download(driver)
 
-    downloaded_geojson = False
-    downloaded_shp = False
+    # move downloaded map
+    move_downloaded_files()
+    time.sleep(5)
 
-    if try_download_format(driver, 'geojson'):
-        move_downloaded_files(dataset_folder)
-        print(f"Downloaded GeoJSON for {dataset_name}")
-        time.sleep(5)  # Allow DOM to stabilize
-        locate_export_button(driver).click()  # Click export again for downloading SHP
-        downloaded_geojson = True
-
-    if try_download_format(driver, 'shp'):
-        move_downloaded_files(dataset_folder)
-        print(f"Downloaded SHP for {dataset_name}")
-        downloaded_shp = True
-
-    if not downloaded_geojson and not downloaded_shp:
-        move_downloaded_files(dataset_folder)
-        try_download_format(driver, 'csv')
-        print(f"Downloaded CSV for {dataset_name}")
-
-    print(f"Download complete for {dataset_name}")
+    print(f"Download complete")
 
     # Return to dashboard
     back_to_dashboard(driver)
 
-def locate_export_button(driver):
+def locate_toggle_menu(driver):
     """Ensure we always get a fresh export button."""
     return WebDriverWait(driver, 30).until(
-        EC.element_to_be_clickable((By.CLASS_NAME, 'js-export'))
+        EC.element_to_be_clickable((By.CLASS_NAME, 'js-toggle-menu'))
     )
 
-def get_export_formats(driver):
-    """Get the available export formats for a dataset"""
-    export_options = WebDriverWait(driver, 30).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'ul.js-formats input.js-format'))
+def locate_download_map(driver):
+    """Ensure we always get a fresh export button."""
+    return WebDriverWait(driver, 30).until(
+        EC.element_to_be_clickable((By.XPATH, '//li[@data-val="export-map"]//button'))
     )
-    return {opt.get_attribute("data-format").lower(): opt for opt in export_options if opt.get_attribute("data-format")}
 
-def try_download_format(driver, format_type):
-    """Attempt to download a dataset in a specific format, re-locating elements each time."""
+def confirm_download(driver):
     try:
-        export_formats = get_export_formats(driver)  # Re-locate options
-        if format_type in export_formats and 'disabled' not in export_formats[format_type].get_attribute('class'):
-            export_formats[format_type].click()
-            download_button = WebDriverWait(driver, 180).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.CDB-Button.js-confirm'))
-            )
-            download_button.click()
-            time.sleep(15)  # Allow time for download
-            return True
+        download_button = WebDriverWait(driver, 180).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.CDB-Button.js-confirm'))
+        )
+        download_button.click()
+        time.sleep(15)  # Allow time for download
     except Exception as e:
-        print(f"Error downloading {format_type}: {e}")
+        print(f"Error when confirming download: {e}")
         traceback.print_exc()
-    return False
-
 
 def back_to_dashboard(driver):
     """Use browser's back button to return to dataset list"""
@@ -186,7 +159,7 @@ def main():
 
     try:
         login(driver)
-        navigate_to_datasets(driver)
+        navigate_to_maps(driver)
 
         page_number = 1
 
@@ -194,15 +167,15 @@ def main():
             page_start_time = time.time()
             print(f"Processing page {page_number}...")
 
-            dataset_links = get_dataset_links(driver)
+            dataset_links = get_map_links(driver)
 
             if not dataset_links:
-                print("No datasets found on this page.")
+                print("No maps found on this page.")
                 break
 
             for idx, dataset_link in enumerate(dataset_links, start=1):
                 print(f"Processing dataset {idx} on page {page_number}...")
-                download_dataset(driver, dataset_link)
+                download_map(driver, dataset_link)
 
             page_end_time = time.time()
             print(f"Time taken for page {page_number}: {page_end_time - page_start_time:.2f} seconds")
@@ -212,7 +185,7 @@ def main():
 
             page_number += 1
 
-        print("All datasets downloaded successfully.")
+        print("All maps downloaded successfully.")
         total_end_time = time.time()
         print(f"Total time taken to download all datasets: {total_end_time - total_start_time:.2f} seconds")
 
