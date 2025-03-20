@@ -2,7 +2,6 @@ import os
 import time
 import shutil
 import traceback
-from itertools import islice
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -15,11 +14,9 @@ BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Datasets"
 TEMP_DOWNLOAD_DIR = os.path.expanduser("/Users/clairexu/Desktop/GitHub/cartoScrape/Data")
 CARTO_URL = "https://ampitup.carto.com"
 EMAIL = "antievictionmap@riseup.net"
-PASSWORD = "***"  # Replace with actual password
+PASSWORD = "Ampitup2013!"  # Replace with actual password
 CHROME_DRIVER_PATH = "./Driver/chromedriver"
 FAILED_DOWNLOADS_FILE = "failed_downloads.txt"
-
-from webdriver_manager.chrome import ChromeDriverManager
 
 # Ensure download directory exists
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
@@ -31,17 +28,10 @@ def log_failed_download(page_number, dataset_name):
 
 def setup_driver():
     chrome_options = Options()
-    chrome_options.add_experimental_option("prefs", {
-        "download.default_directory": TEMP_DOWNLOAD_DIR,
-        "download.prompt_for_download": False,
-        "profile.default_content_settings.popups": 0,
-        "safebrowsing.enabled": True
-    })
     prefs = {"download.default_directory": TEMP_DOWNLOAD_DIR}
     chrome_options.add_experimental_option("prefs", prefs)
 
-    # service = Service(executable_path=CHROME_DRIVER_PATH)
-    service = Service(ChromeDriverManager().install())
+    service = Service(executable_path=CHROME_DRIVER_PATH)
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
@@ -77,16 +67,20 @@ def login(driver):
     driver.find_element(By.CLASS_NAME, 'button.button--arrow.is-cartoRed.u-width--100').click()
 
 
+def navigate_to_datasets(driver):
+    """Navigate to Data Dashboard"""
+    data_link = WebDriverWait(driver, 30).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, 'a.navbar-elementItem[href="/dashboard/datasets/"]'))
+    )
+    data_link.click()
+
+
 def get_dataset_links(driver):
     """Retrieve all dataset links in a page"""
-    time.sleep(8)
     dataset_elements = WebDriverWait(driver, 30).until(
         EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a.dataset-row.dataset-row--can-hover'))
     )
     return [elem.get_attribute('href') for elem in dataset_elements]
-    # res = list(islice(reversed(dataset_elements), 0, 2))
-    # res.reverse()
-    # return [elem.get_attribute('href') for elem in res]
 
 def download_dataset(driver, dataset_link, page_number):
     """Download a dataset in available formats (GeoJSON, SHP, CSV)."""
@@ -102,10 +96,7 @@ def download_dataset(driver, dataset_link, page_number):
         os.makedirs(dataset_folder, exist_ok=True)
 
         # Click export button
-        export_button = WebDriverWait(driver, 30).until(
-            EC.element_to_be_clickable((By.CLASS_NAME, 'js-export'))
-        )
-        export_button.click()
+        locate_export_button(driver).click()
 
         downloaded_geojson = False
         downloaded_shp = False
@@ -113,6 +104,7 @@ def download_dataset(driver, dataset_link, page_number):
         if try_download_format(driver, 'geojson', page_number, dataset_name):
             move_downloaded_files(dataset_folder)
             print(f"Downloaded GeoJSON for {dataset_name}")
+            time.sleep(5)  # Allow DOM to stabilize
             locate_export_button(driver).click()  # Click export again for downloading SHP
             downloaded_geojson = True
 
@@ -128,9 +120,12 @@ def download_dataset(driver, dataset_link, page_number):
 
         print(f"Download complete for {dataset_name}")
 
+        # Return to dashboard
+        back_to_dashboard(driver)
+
     except Exception as e:
         print(f"Error downloading dataset: {e}")
-        log_failed_download(page_number, "Unknown")
+        log_failed_download(page_number, dataset_name = "Unkown")
 
 def locate_export_button(driver):
     """Ensure we always get a fresh export button."""
@@ -145,61 +140,72 @@ def get_export_formats(driver):
     )
     return {opt.get_attribute("data-format").lower(): opt for opt in export_options if opt.get_attribute("data-format")}
 
-
 def try_download_format(driver, format_type, page_number, dataset_name):
     """Attempt to download a dataset in a specific format, re-locating elements each time."""
     try:
-        export_formats = get_export_formats(driver)  # Get available formats
+        export_formats = get_export_formats(driver)  # Re-locate options
         if format_type in export_formats and 'disabled' not in export_formats[format_type].get_attribute('class'):
             export_formats[format_type].click()
-            time.sleep(2)  # Allow DOM to update
-
-            # Ensure the Download Button is Available
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.XPATH, "//button[contains(@class, 'js-confirm')]"))
+            download_button = WebDriverWait(driver, 180).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.CDB-Button.js-confirm'))
             )
-
-            download_button = driver.find_element(By.CSS_SELECTOR, "button.CDB-Button.js-confirm")
-
-            # Scroll Into View
-            driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
-            time.sleep(1)
-
-            # Click the Button (JavaScript Click as Backup)
-            try:
-                download_button.click()
-                print(f"Clicked download button for {format_type} - {dataset_name}")
-            except:
-                print("Normal click failed. Using JavaScript click.")
-                driver.execute_script("arguments[0].click();", download_button)
-
-            print(f"Download started for {format_type} - {dataset_name}")
+            # download_button.click()
+            driver.execute_script("arguments[0].click();", download_button)
             time.sleep(15)  # Allow time for download
             return True
-
     except Exception as e:
         print(f"Error downloading {format_type}: {e}")
         log_failed_download(page_number, dataset_name)
         traceback.print_exc()
-
     return False
+
+
+def back_to_dashboard(driver):
+    """Use browser's back button to return to dataset list"""
+    try:
+        driver.back()
+        time.sleep(15)
+        print("Returned to the Data Dashboard")
+    except Exception as e:
+        print(f"Error returning to the Data Dashboard: {e}")
+
+def navigate_to_next_page(driver):
+    """Navigate to the next page by selecting the page following the current one"""
+    try:
+        # Locate the current page
+        current_page = WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "li.Pagination-listItem.is-current"))
+        )
+
+        # Find the next page element
+        next_page = current_page.find_element(By.XPATH, "following-sibling::li")
+
+        if next_page:
+            next_page.click()
+            time.sleep(15)
+            print("Navigated to the next page")
+            return True
+        else:
+            print("No next page available")
+            return False
+
+    except Exception as e:
+        print(f"Error navigating to next page: {e}")
+        return False
 
 def main():
     driver = setup_driver()
     total_start_time = time.time()
 
-    page_link = "https://ampitup.carto.com/dashboard/datasets/?page="
-    page_number = 1
-
     try:
         login(driver)
-        curr_page_link = page_link + str(page_number)
+        navigate_to_datasets(driver)
+
+        page_number = 1
 
         while True:
             page_start_time = time.time()
             print(f"Processing page {page_number}...")
-
-            driver.get(curr_page_link)
 
             dataset_links = get_dataset_links(driver)
 
@@ -214,10 +220,10 @@ def main():
             page_end_time = time.time()
             print(f"Time taken for page {page_number}: {page_end_time - page_start_time:.2f} seconds")
 
-            if page_number == 50: break
+            if not navigate_to_next_page(driver):
+                break  # Exit loop if no next page exists
 
             page_number += 1
-            curr_page_link = page_link + str(page_number)
 
         print("All datasets downloaded successfully.")
         total_end_time = time.time()

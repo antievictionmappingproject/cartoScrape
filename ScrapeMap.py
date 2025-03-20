@@ -14,7 +14,7 @@ BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Maps"
 TEMP_DOWNLOAD_DIR = os.path.expanduser("/Users/clairexu/Desktop/GitHub/cartoScrape/Data")
 CARTO_URL = "https://ampitup.carto.com"
 EMAIL = "antievictionmap@riseup.net"
-PASSWORD = "********"  # Replace with actual password
+PASSWORD = "***"  # Replace with actual password
 CHROME_DRIVER_PATH = "./Drivers/chromedriver"
 
 # Ensure download directory exists
