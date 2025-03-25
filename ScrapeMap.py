@@ -9,43 +9,36 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Maps"
 TEMP_DOWNLOAD_DIR = os.path.expanduser("/Users/clairexu/Desktop/GitHub/cartoScrape/Data")
 CARTO_URL = "https://ampitup.carto.com"
 EMAIL = "antievictionmap@riseup.net"
 PASSWORD = "***"  # Replace with actual password
-CHROME_DRIVER_PATH = "./Drivers/chromedriver"
+CHROME_DRIVER_PATH = "./Driver/chromedriver"
+FAILED_DOWNLOADS_FILE = "failed_maps.txt"
 
 # Ensure download directory exists
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
+def log_failed_download(page_number, map_idx):
+    """Log failed downloads to a file."""
+    with open(FAILED_DOWNLOADS_FILE, "a") as f:
+        f.write(f"Page {page_number}: {map_idx}th Dataset\n")
+
 def setup_driver():
     chrome_options = Options()
-    prefs = {"download.default_directory": TEMP_DOWNLOAD_DIR}
+    prefs = {
+        "download.default_directory": BASE_DOWNLOAD_DIR,
+        "download.prompt_for_download": False,
+        "profile.default_content_settings.popups": 0,
+        "safebrowsing.enabled": True
+    }
     chrome_options.add_experimental_option("prefs", prefs)
-
-    service = Service(executable_path=CHROME_DRIVER_PATH)
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    return driver
-
-def move_downloaded_files():
-    """Move the most recently downloaded file to the Carto-Maps folder."""
-    time.sleep(5)
-    try:
-        files = [f for f in os.listdir(TEMP_DOWNLOAD_DIR) if not f.startswith('.')]
-        if not files:
-            print("WARNING: No downloaded files found.")
-            return
-
-        latest_file = max(files, key=lambda f: os.path.getctime(os.path.join(TEMP_DOWNLOAD_DIR, f)))
-        source_path = os.path.join(TEMP_DOWNLOAD_DIR, latest_file)
-        destination_path = os.path.join(BASE_DOWNLOAD_DIR, latest_file)
-
-        shutil.move(source_path, destination_path)
-        print(f"Moved {latest_file} to {BASE_DOWNLOAD_DIR}")
-    except Exception as e:
-        print(f"ERROR: Failed to move downloaded file - {e}")
+    chrome_options.add_argument("--headless=new")
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=chrome_options)
 
 def login(driver):
     """Log into Carto"""
@@ -70,32 +63,31 @@ def navigate_to_maps(driver):
 
 def get_map_links(driver):
     """Retrieve all dataset links in a page"""
-    maps_elements = WebDriverWait(driver, 30).until(
+    # maps_elements = WebDriverWait(driver, 30).until(
+    #     EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a.card.map-card.card--can-hover'))
+    # )
+    # return [elem.get_attribute('href') for elem in maps_elements]
+    time.sleep(8)
+    map_elements = WebDriverWait(driver, 30).until(
         EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a.card.map-card.card--can-hover'))
     )
-    return [elem.get_attribute('href') for elem in maps_elements]
+    return [elem.get_attribute('href') for elem in map_elements]
 
-def download_map(driver, map_link):
+def download_map(driver, map_link, page_number, idx):
     """Download a dataset in available formats (GeoJSON, SHP, CSV)."""
     driver.get(map_link)
 
-    # open toggle menu
-    locate_toggle_menu(driver).click()
+    try:
+        locate_toggle_menu(driver).click()
+        locate_download_map(driver).click()
+        confirm_download(driver)
+        time.sleep(5)
+        print(f"Download complete")
 
-    # click download map
-    locate_download_map(driver).click()
+    except Exception as e:
+        print(f"Error downloading dataset: {e}")
+        log_failed_download(page_number, idx)
 
-    # confirm download
-    confirm_download(driver)
-
-    # move downloaded map
-    move_downloaded_files()
-    time.sleep(5)
-
-    print(f"Download complete")
-
-    # Return to dashboard
-    back_to_dashboard(driver)
 
 def locate_toggle_menu(driver):
     """Ensure we always get a fresh export button."""
@@ -110,14 +102,39 @@ def locate_download_map(driver):
     )
 
 def confirm_download(driver):
+    # try:
+    #     download_button = WebDriverWait(driver, 180).until(
+    #         EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.CDB-Button.js-confirm'))
+    #     )
+    #     download_button.click()
+    #     time.sleep(15)  # Allow time for download
+    # except Exception as e:
+    #     print(f"Error when confirming download: {e}")
+    #     traceback.print_exc()
     try:
-        download_button = WebDriverWait(driver, 180).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.CDB-Button.js-confirm'))
-        )
-        download_button.click()
+        WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.XPATH, "//button[contains(@class, 'js-confirm')]"))
+            )
+
+        download_button = driver.find_element(By.CSS_SELECTOR, "button.CDB-Button.js-confirm")
+
+        # Scroll Into View
+        driver.execute_script("arguments[0].scrollIntoView(true);", download_button)
+        time.sleep(1)
+
+        # Click the Button (JavaScript Click as Backup)
+        try:
+            download_button.click()
+            print(f"Clicked download button ")
+        except:
+            print("Normal click failed. Using JavaScript click.")
+            driver.execute_script("arguments[0].click();", download_button)
+
+        print(f"Download started")
         time.sleep(15)  # Allow time for download
+
     except Exception as e:
-        print(f"Error when confirming download: {e}")
+        print(f"Error downloading")
         traceback.print_exc()
 
 def back_to_dashboard(driver):
@@ -157,15 +174,19 @@ def main():
     driver = setup_driver()
     total_start_time = time.time()
 
+    page_link = "https://ampitup.carto.com/dashboard/maps/?page="
+    page_number = 1
+
     try:
         login(driver)
-        navigate_to_maps(driver)
-
-        page_number = 1
+        curr_page_link = page_link + str(page_number)
 
         while True:
             page_start_time = time.time()
             print(f"Processing page {page_number}...")
+
+            driver.get(curr_page_link)
+            print("Now on page: " + driver.current_url)
 
             dataset_links = get_map_links(driver)
 
@@ -175,15 +196,15 @@ def main():
 
             for idx, dataset_link in enumerate(dataset_links, start=1):
                 print(f"Processing dataset {idx} on page {page_number}...")
-                download_map(driver, dataset_link)
+                download_map(driver, dataset_link, page_number, idx)
 
             page_end_time = time.time()
             print(f"Time taken for page {page_number}: {page_end_time - page_start_time:.2f} seconds")
 
-            if not navigate_to_next_page(driver):
-                break  # Exit loop if no next page exists
+            if page_number == 18: break
 
             page_number += 1
+            curr_page_link = page_link + str(page_number)
 
         print("All maps downloaded successfully.")
         total_end_time = time.time()

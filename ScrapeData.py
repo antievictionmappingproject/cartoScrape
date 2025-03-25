@@ -10,6 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 BASE_DOWNLOAD_DIR = "/Users/clairexu/Desktop/GitHub/cartoScrape/Carto-Datasets"
 TEMP_DOWNLOAD_DIR = os.path.expanduser("/Users/clairexu/Desktop/GitHub/cartoScrape/Data")
@@ -18,8 +19,7 @@ EMAIL = "antievictionmap@riseup.net"
 PASSWORD = "***"  # Replace with actual password
 CHROME_DRIVER_PATH = "./Driver/chromedriver"
 FAILED_DOWNLOADS_FILE = "failed_downloads.txt"
-
-from webdriver_manager.chrome import ChromeDriverManager
+LOG_FILE = "log.txt"
 
 # Ensure download directory exists
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
@@ -189,7 +189,7 @@ def main():
     total_start_time = time.time()
 
     page_link = "https://ampitup.carto.com/dashboard/datasets/?page="
-    page_number = 1
+    page_number = 4
 
     try:
         login(driver)
@@ -200,6 +200,7 @@ def main():
             print(f"Processing page {page_number}...")
 
             driver.get(curr_page_link)
+            print("Now on page: " +driver.current_url)
 
             dataset_links = get_dataset_links(driver)
 
